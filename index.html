@@ -96,7 +96,6 @@ var weatherIcons = {
 };
 
 function InitAll() {
-    // 記得確認 CSV 檔案名稱是否正確
     fetch('water_quality.csv?t=' + Date.now())
         .then(res => res.text())
         .then(text => {
@@ -145,22 +144,20 @@ function createMarkers() {
             document.getElementById('portSelect').value = name;
             map.setCenter(pt);
             map.setZoom(15);
-            onFilterChange(); // 點擊 marker 觸發更新
+            onFilterChange(); 
         });
     });
 }
 
-// 當「漁港」或「檢測項目」改變時，統一呼叫此函式
 function onFilterChange() {
     var portName = document.getElementById('portSelect').value;
-    var dataType = document.getElementById('typeSelect').value; // 取得 ph, do, EC 或 salinity
+    var dataType = document.getElementById('typeSelect').value; 
 
     if (!portName) {
         document.getElementById('currentInfo').textContent = "尚未選擇";
         return;
     }
 
-    // 更新介面上的文字顯示（如果選到 salinity 會顯示 SALINITY）
     document.getElementById('currentInfo').textContent = portName + " - " + dataType.toUpperCase();
 
     if (markers[portName]) {
@@ -171,49 +168,56 @@ function onFilterChange() {
     updateChart(portName, dataType);
 }
 
-// 取得該港口資料並排序
 function getPortData(portName) {
     return csvData.filter(r => String(r.port).trim() === portName)
                   .sort((a,b) => (a.year*100+a.month)-(b.year*100+b.month));
 }
 
-// 更新圖表核心邏輯
 function updateChart(portName, dataType) {
     var rows = getPortData(portName);
     
-    // 如果沒有資料，先清空圖表
     if (!rows || rows.length === 0) {
         if (mainChart) mainChart.destroy();
         return;
     }
 
-    // 準備 X 軸與 Y 軸資料
     var labels = rows.map(r => r.year + "/" + r.month);
-    
-    // 根據 dataType 動態抓取對應欄位 (ph, do, EC, salinity)
     var dataValues = rows.map(r => r[dataType]); 
 
-    // 設定圖表顏色與標籤（加入單位與新增鹽度）
     var chartLabel = "";
     var lineColor = "";
+    // 新增 Y軸設定變數
+    var yMin = 0, yMax = 100, yStep = 10; 
+
     if (dataType === 'ph') { 
         chartLabel = 'pH 值'; 
         lineColor = 'orange'; 
+        yMin = 5; 
+        yMax = 9; 
+        yStep = 0.5;
     }
     else if (dataType === 'do') { 
         chartLabel = '溶氧量 (DO) (mg/L)'; 
         lineColor = 'blue'; 
+        yMin = 0; 
+        yMax = 10; 
+        yStep = 1.0;
     }
     else if (dataType === 'EC') { 
         chartLabel = '導電度 (EC) (mS/cm)'; 
         lineColor = 'green'; 
+        yMin = 30; 
+        yMax = 55; 
+        yStep = 5.0;
     }
     else if (dataType === 'salinity') { 
         chartLabel = '鹽度 (ppt)'; 
         lineColor = 'purple'; 
+        yMin = 20; 
+        yMax = 48; 
+        yStep = 4.0;
     }
 
-    // 銷毀舊圖表
     if (mainChart) mainChart.destroy();
 
     var ctx = document.getElementById('mainChart').getContext('2d');
@@ -232,26 +236,32 @@ function updateChart(portName, dataType) {
         },
         options: {
             maintainAspectRatio: false,
+            // 在這裡設定 Y 軸
+            scales: {
+                y: {
+                    min: yMin,        // Y軸最小值
+                    max: yMax,        // Y軸最大值
+                    ticks: {
+                        stepSize: yStep // Y軸刻度間距
+                    }
+                }
+            },
             interaction: {
                 mode: 'index',
                 intersect: false,
             },
             plugins: {
                 tooltip: {
-                    // 自定義 Tooltip 內容
                     callbacks: {
-                        // 在數值下方加入額外資訊
                         afterBody: function(context) {
-                            var index = context[0].dataIndex; // 取得目前滑鼠指到的資料索引
-                            var row = rows[index]; // 取得原始 CSV 該列資料
+                            var index = context[0].dataIndex; 
+                            var row = rows[index]; 
                             
-                            // 處理天氣圖示
                             var weather = row['天氣'] || '';
-                            var icon = weatherIcons[weather] || ''; // 如果找不到對應圖示則留空
+                            var icon = weatherIcons[weather] || ''; 
 
-                            // 回傳多行文字陣列
                             return [
-                                '', // 空一行比較好看
+                                '', 
                                 '採樣時間: ' + (row['採樣時間'] || '無'),
                                 '潮汐: ' + (row['潮汐'] || '無'),
                                 '天氣: ' + weather + ' ' + icon
