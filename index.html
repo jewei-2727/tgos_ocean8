@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>宜蘭漁港水質監測系統</title>
+
+<script type="text/javascript" 
+    src="https://api.tgos.tw/TGOS_API/tgos?ver=2&AppID=x+JLVSx85Lk=&APIKey=in8W74q0ogpcfW/STwicK8D5QwCdddJf05/7nb+OtDh8R99YN3T0LurV4xato3TpL/fOfylvJ9Wv/khZEsXEWxsBmg+GEj4AuokiNXCh14Rei21U5GtJpIkO++Mq3AguFK/ISDEWn4hMzqgrkxNe1Q==" 
+    charset="utf-8"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+body { margin:0; font-family:"Microsoft JhengHei", sans-serif; display:flex; height:100vh; width:100vw; overflow:hidden; }
+#MapDiv { flex:1; height:100%; }
+#controlPanel {
+    width:400px;
+    height:100%;
+    background:#fff;
+    padding:20px;
+    box-sizing:border-box;
+    overflow-y:auto;
+    border-left:1px solid #ccc;
+}
+h3 { color:#1a73e8; border-bottom:2px solid #1a73e8; padding-bottom:8px; margin-top:0; }
+.row { margin-bottom:20px; }
+select, button { width:100%; padding:8px; font-size:16px; margin-top: 5px; }
+label { font-weight: bold; display: block; }
+.chart-container { position:relative; height:300px; width:100%; margin-bottom:20px; }
+</style>
+</head>
+
+<body onload="InitAll();">
+    <div id="MapDiv"></div>
+
+    <div id="controlPanel">
+        <h3>漁港水質監測</h3>
+        
+        <div class="row">
+            <label>1. 選擇監測漁港：</label>
+            <select id="portSelect" onchange="onFilterChange()">
+                <option value="">-- 請選擇漁港 --</option>
+            </select>
+        </div>
+
+        <div class="row">
+            <label>2. 選擇檢測項目：</label>
+            <select id="typeSelect" onchange="onFilterChange()">
+                <option value="ph">pH (酸鹼值)</option>
+                <option value="do">DO (溶氧量, mg/L)</option>
+                <option value="EC">EC (導電度, mS/cm)</option>
+                <option value="salinity">鹽度 (ppt)</option>
+            </select>
+        </div>
+
+        <div class="row">
+            <b>目前顯示：</b> <span id="currentInfo">請選擇漁港</span>
+        </div>
+
+        <div class="row chart-container">
+            <canvas id="mainChart"></canvas>
+        </div>
+    </div>
+
+<script>
+var map = null;
+var csvData = [];
+var markers = {};
+var mainChart = null; // 統一使用一個圖表變數
+
+// 14 個漁港座標 (TWD97)
+var portsCoords = {
+    "梗枋漁港": { x: 337764.335, y: 2755398.563 },
+    "烏石港": { x: 334224.121, y: 2750857.756 },
+    "大溪第一漁港": { x: 340745.390, y: 2759584.125 },
+    "大溪第二漁港": { x: 340813.356, y: 2759507.712 },
+    "蕃薯寮漁港": { x: 342395.941, y: 2760783.203 },
+    "大里漁港": { x: 343046.202, y: 2761926.005 },
+    "石城漁港": { x: 346013.905, y: 2763893.910 },
+    "桶盤堀漁港": { x: 344532.179, y: 2763169.322 },
+    "蘇澳港": { x: 337596.057, y: 2720381.909 },
+    "南方澳第三漁港": { x: 337721.962, y: 2719959.266 },
+    "南方澳第一漁港": { x: 337866.597, y: 2719772.307 },
+    "南方澳第二漁港": { x: 337940.522, y: 2719273.154 },
+    "粉鳥林漁港": { x: 335482.954, y: 2710393.202 },
+    "朝陽漁港": { x: 333150.115, y: 2706340.334 }
+};
+
+// 天氣圖示對照表 (使用 Emoji 代表小圖示)
+var weatherIcons = {
+    "晴": "☀️",
+    "陰": "☁️",
+    "雨": "🌧️"
+};
+
+function InitAll() {
+    // 記得確認 CSV 檔案名稱是否正確
+    fetch('water_quality.csv?t=' + Date.now())
+        .then(res => res.text())
+        .then(text => {
+            csvData = Papa.parse(text.trim(), { header:true, skipEmptyLines:true, dynamicTyping:true }).data;
+            updateDropdown();
+            initMap();
+        })
+        .catch(err => {
+            console.error("CSV 讀取失敗", err);
+            alert("無法載入 CSV，請確認檔案存在。");
+        });
+}
+
+function updateDropdown() {
+    var sel = document.getElementById('portSelect');
+    sel.innerHTML = '<option value="">-- 請選擇漁港 --</option>';
+    Object.keys(portsCoords).sort().forEach(name => {
+        var opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        sel.appendChild(opt);
+    });
+}
+
+function initMap() {
+    var mapDiv = document.getElementById("MapDiv");
+    var startPt = new TGOS.TGPoint(337764.335, 2755398.563);
+    map = new TGOS.TGOnlineMap(mapDiv, TGOS.TGCoordSys.EPSG3826, {
+        zoom: 11,
+        navigationControl: true,
+        navigationControlOptions: {
+            controlPosition: TGOS.TGControlPosition.TOP_LEFT,
+            navigationControlStyle: TGOS.TGNavigationControlStyle.SMALL
+        }
+    });
+    map.setCenter(startPt);
+    createMarkers();
+}
+
+function createMarkers() {
+    var img = new TGOS.TGImage("https://api.tgos.tw/TGOS_API/images/marker2.png", new TGOS.TGSize(38,33));
+    Object.keys(portsCoords).forEach(name => {
+        var pt = new TGOS.TGPoint(portsCoords[name].x, portsCoords[name].y);
+        var mk = new TGOS.TGMarker(map, pt, name, img);
+        markers[name] = mk;
+        TGOS.TGEvent.addListener(mk, "click", function() {
+            document.getElementById('portSelect').value = name;
+            map.setCenter(pt);
+            map.setZoom(15);
+            onFilterChange(); // 點擊 marker 觸發更新
+        });
+    });
+}
+
+// 當「漁港」或「檢測項目」改變時，統一呼叫此函式
+function onFilterChange() {
+    var portName = document.getElementById('portSelect').value;
+    var dataType = document.getElementById('typeSelect').value; // 取得 ph, do, EC 或 salinity
+
+    if (!portName) {
+        document.getElementById('currentInfo').textContent = "尚未選擇";
+        return;
+    }
+
+    // 更新介面上的文字顯示（如果選到 salinity 會顯示 SALINITY）
+    document.getElementById('currentInfo').textContent = portName + " - " + dataType.toUpperCase();
+
+    if (markers[portName]) {
+        var pos = markers[portName].getPosition();
+        map.setCenter(pos);
+    }
+    
+    updateChart(portName, dataType);
+}
+
+// 取得該港口資料並排序
+function getPortData(portName) {
+    return csvData.filter(r => String(r.port).trim() === portName)
+                  .sort((a,b) => (a.year*100+a.month)-(b.year*100+b.month));
+}
+
+// 更新圖表核心邏輯
+function updateChart(portName, dataType) {
+    var rows = getPortData(portName);
+    
+    // 如果沒有資料，先清空圖表
+    if (!rows || rows.length === 0) {
+        if (mainChart) mainChart.destroy();
+        return;
+    }
+
+    // 準備 X 軸與 Y 軸資料
+    var labels = rows.map(r => r.year + "/" + r.month);
+    
+    // 根據 dataType 動態抓取對應欄位 (ph, do, EC, salinity)
+    var dataValues = rows.map(r => r[dataType]); 
+
+    // 設定圖表顏色與標籤（加入單位與新增鹽度）
+    var chartLabel = "";
+    var lineColor = "";
+    if (dataType === 'ph') { 
+        chartLabel = 'pH 值'; 
+        lineColor = 'orange'; 
+    }
+    else if (dataType === 'do') { 
+        chartLabel = '溶氧量 (DO) (mg/L)'; 
+        lineColor = 'blue'; 
+    }
+    else if (dataType === 'EC') { 
+        chartLabel = '導電度 (EC) (mS/cm)'; 
+        lineColor = 'green'; 
+    }
+    else if (dataType === 'salinity') { 
+        chartLabel = '鹽度 (ppt)'; 
+        lineColor = 'purple'; 
+    }
+
+    // 銷毀舊圖表
+    if (mainChart) mainChart.destroy();
+
+    var ctx = document.getElementById('mainChart').getContext('2d');
+    mainChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: chartLabel,
+                data: dataValues,
+                borderColor: lineColor,
+                backgroundColor: lineColor,
+                fill: false,
+                tension: 0.1
+            }]
+        },
+        options: {
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                tooltip: {
+                    // 自定義 Tooltip 內容
+                    callbacks: {
+                        // 在數值下方加入額外資訊
+                        afterBody: function(context) {
+                            var index = context[0].dataIndex; // 取得目前滑鼠指到的資料索引
+                            var row = rows[index]; // 取得原始 CSV 該列資料
+                            
+                            // 處理天氣圖示
+                            var weather = row['天氣'] || '';
+                            var icon = weatherIcons[weather] || ''; // 如果找不到對應圖示則留空
+
+                            // 回傳多行文字陣列
+                            return [
+                                '', // 空一行比較好看
+                                '採樣時間: ' + (row['採樣時間'] || '無'),
+                                '潮汐: ' + (row['潮汐'] || '無'),
+                                '天氣: ' + weather + ' ' + icon
+                            ];
+                        }
+                    },
+                    titleFont: { size: 14 },
+                    bodyFont: { size: 13 },
+                    padding: 10,
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)'
+                }
+            }
+        }
+    });
+}
+</script>
+</body>
+</html>
